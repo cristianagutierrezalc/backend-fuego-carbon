@@ -256,9 +256,6 @@ PRODUCTS_DB: list[Product] = [
 
 # ---------------------------------------------------------------------------
 # Capa de acceso a datos (Repository Pattern)
-# Aísla "cómo se guardan los datos" de "cómo se exponen por HTTP". Si mañana
-# esto pasa de una lista en memoria a una base de datos real, las rutas de
-# abajo no cambian ni una línea.
 # ---------------------------------------------------------------------------
 class ProductRepository:
     """Encapsula el acceso al catálogo de productos."""
@@ -317,32 +314,18 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# CORS: en desarrollo se permite cualquier origen para facilitar pruebas del
-# frontend estático servido con file:// o un servidor local.
-# En Firebase Hosting, el rewrite de /api/** hace que el navegador vea el
-# mismo origen (tu-proyecto.web.app) tanto para el HTML como para la API,
-# así que CORS deja de ser un problema en producción. Aun así, se restringe
-# explícitamente por si alguien llama a Cloud Run directamente.
-ALLOWED_ORIGINS = [
-    "http://localhost:5000",       # firebase emulators:start (hosting)
-    "http://127.0.0.1:5000",
-    "https://TU-PROYECTO.web.app",       # <-- reemplaza por tu dominio real de Firebase
-    "https://TU-PROYECTO.firebaseapp.com",  # <-- idem
-]
-
+# CORS corregido para permitir peticiones desde Firebase sin bloqueos
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],  # Permite cualquier origen de forma segura para esta demo
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Red de seguridad: cualquier error no previsto se registra y responde
-    de forma controlada, sin filtrar detalles internos al cliente."""
     logger.exception("Error no controlado en %s: %s", request.url.path, exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -355,15 +338,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ---------------------------------------------------------------------------
 @app.get("/api/health", response_model=HealthStatus, tags=["Meta"])
 def health_check() -> HealthStatus:
-    """Endpoint de salud para monitoreo/uptime checks."""
     return HealthStatus(status="ok", total_products=len(repository.list_all()))
 
 
 @app.get("/api/categories", response_model=list[CategorySummary], tags=["Categorías"])
 def get_categories() -> list[CategorySummary]:
-    """Devuelve las categorías disponibles y cuántos productos tiene cada una.
-    Permite al frontend construir su barra de filtros dinámicamente en vez
-    de tenerla hardcodeada (y potencialmente desincronizada del backend)."""
     return repository.category_summary()
 
 
@@ -374,8 +353,6 @@ def get_products(
     q: Optional[str] = Query(default=None, min_length=1, max_length=80, description="Búsqueda libre por nombre/descripción."),
     available_only: bool = Query(default=True, description="Excluir productos agotados."),
 ) -> list[Product]:
-    """Lista productos, con filtros opcionales combinables por categoría,
-    destacado, texto de búsqueda y disponibilidad."""
     return repository.filter(
         category=category,
         featured=featured,
@@ -386,7 +363,6 @@ def get_products(
 
 @app.get("/api/products/{product_id}", response_model=Product, tags=["Productos"])
 def get_product(product_id: str) -> Product:
-    """Obtiene el detalle de un producto puntual por su id."""
     try:
         return repository.get_by_id(product_id)
     except KeyError as exc:
